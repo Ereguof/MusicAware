@@ -13,5 +13,8 @@ data class ContextConfig(
     val requireTime: Boolean = false,
     val timeStart: String? = null, // format "HH:mm"
     val timeEnd: String? = null,   // format "HH:mm"
+    val requireActivity: Boolean = false,
+    val requiredActivityType: Int? = null, // DetectedActivity.IN_VEHICLE, ON_FOOT, RUNNING, WALKING, etc.
+    val minConfidence: Int = 75,           // Seuil de confiance (0-100)
     val playlist: List<Uri>
 )

@@ -37,6 +37,9 @@ object ConfigRepository {
                 requireTime = it.requireTime,
                 timeStart = it.timeStart,
                 timeEnd = it.timeEnd,
+                requireActivity = it.requireActivity,
+                requiredActivityType = it.requiredActivityType,
+                minConfidence = it.minConfidence,
                 playlist = it.playlist.map { uri -> uri.toString() }
             )
         }
@@ -78,6 +81,9 @@ object ConfigRepository {
                 requireTime = it.requireTime,
                 timeStart = it.timeStart,
                 timeEnd = it.timeEnd,
+                requireActivity = it.requireActivity,
+                requiredActivityType = it.requiredActivityType,
+                minConfidence = it.minConfidence,
                 playlist = uris
             )
         })
@@ -95,6 +101,9 @@ data class ContextConfigDTO(
     val requireTime: Boolean,
     val timeStart: String?,
     val timeEnd: String?,
+    val requireActivity: Boolean,
+    val requiredActivityType: Int?,
+    val minConfidence: Int,
     val playlist: List<String>
 )
 

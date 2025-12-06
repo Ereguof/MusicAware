@@ -3,76 +3,83 @@ package uqac.infonuagique.soundaware
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import androidx.core.content.ContextCompat
+import android.os.Build
+import androidx.core.app.ActivityCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-data class UserContextData(
-    val headphonesConnected: Boolean,
-    val time: String,
-    val location: String
-)
+data class UserContext(
+    var headphonesConnected: Boolean = false,
+    var location: String = "inconnue",
+    var time: String = "00:00",
+    // Activity fields
+    var currentActivityType: Int = -1, // -1 or DetectedActivity.UNKNOWN
+    var currentActivityConfidence: Int = 0
+) {
 
-class UserContext {
-    fun fetch(context: Context): UserContextData {
-        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        var connected = false
-
-        try {
-            val devices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            for (d in devices) {
-                when (d.type) {
-                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-                    AudioDeviceInfo.TYPE_WIRED_HEADSET,
-                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-                    AudioDeviceInfo.TYPE_USB_DEVICE,
-                    AudioDeviceInfo.TYPE_USB_ACCESSORY -> {
-                        if (d.isSink) {
-                            connected = true
-                            break
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {}
-
-        val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-        val time = sdf.format(Date())
-
-        val hasLocationPermission = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        val locationString = if (hasLocationPermission) {
-            try {
-                val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                val providers = lm.getProviders(true)
-                var best: Location? = null
-                for (p in providers) {
-                    val l = lm.getLastKnownLocation(p)
-                    if (l != null && (best == null || l.time > best.time)) {
-                        best = l
-                    }
-                }
-                if (best != null) {
-                    String.format(Locale.getDefault(), "%.6f, %.6f", best.latitude, best.longitude)
-                } else {
-                    "inconnue"
-                }
-            } catch (e: Exception) {
-                "erreur"
-            }
-        } else {
-            "permission manquante"
+    fun fetch(context: Context): UserContext {
+        // 1. HEADPHONES CHECK
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        this.headphonesConnected = devices.any {
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
         }
 
-        return UserContextData(connected, time, locationString)
+        // 2. TIME CHECK
+        val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+        this.time = sdf.format(Date())
+
+        // 3. LOCATION CHECK
+        if (ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val loc: Location? = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+
+            if (loc != null) {
+                // Optional: Reverse Geocoding for city name, or just store lat/long string
+                // For simplicity, we store coordinates or city if available
+                try {
+                    val geocoder = Geocoder(context, Locale.getDefault())
+                    // Note: synchronous geocoder is discouraged on main thread but okay for simple prototype
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        // Async implementation omitted for brevity, using lat/long string fallback
+                        this.location = "${loc.latitude},${loc.longitude}"
+                    } else {
+                        @Suppress("DEPRECATION")
+                        val addresses = geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
+                        this.location = if (!addresses.isNullOrEmpty()) {
+                            addresses[0].locality ?: "${loc.latitude},${loc.longitude}"
+                        } else {
+                            "${loc.latitude},${loc.longitude}"
+                        }
+                    }
+                } catch (e: Exception) {
+                    this.location = "${loc.latitude},${loc.longitude}"
+                }
+            } else {
+                this.location = "Localisation non disponible"
+            }
+        } else {
+            this.location = "permission manquante"
+        }
+
+        // 4. ACTIVITY RECOGNITION CHECK (Vital Fix)
+        // We pull the latest values directly from the Receiver's static storage
+        this.currentActivityType = ActivityRecognitionReceiver.getCurrentActivityTypeVal()
+        this.currentActivityConfidence = ActivityRecognitionReceiver.getCurrentActivityConfidenceVal()
+
+        return this
     }
 }

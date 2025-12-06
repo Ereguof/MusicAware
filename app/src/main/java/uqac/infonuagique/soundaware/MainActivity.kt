@@ -8,9 +8,9 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,20 +26,42 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.DetectedActivity
+import uqac.infonuagique.soundaware.ActivityRecognitionReceiver.Companion.getActivityName
 import uqac.infonuagique.soundaware.ui.theme.SoundAwareTheme
-import kotlin.collections.remove
-import kotlin.rem
-import kotlin.text.compareTo
-import kotlin.text.get
-import kotlin.toString
 
 class MainActivity : ComponentActivity() {
+
     private val userContext = UserContext()
     private val LOCATION_PERMISSION_REQUEST = 1001
+
+    // Launcher pour demander la permission d'activité physique
+    private val activityRecognitionPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            // Forcer le redémarrage propre
+            ActivityDetectionService.stopActivityRecognition(this)
+            ActivityDetectionService.startActivityRecognitionIfPermissionGranted(this)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ConfigRepository.load(this)
+
+        // Démarrage intelligent de la détection d'activité
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityDetectionService.startActivityRecognitionIfPermissionGranted(this)
+        } else {
+            // Demande la permission au premier lancement
+            activityRecognitionPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+
         enableEdgeToEdge()
         setContent {
             SoundAwareTheme {
@@ -55,6 +77,10 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
     }
 }
 
@@ -74,7 +100,6 @@ fun ConfigsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
 
-    // Affichage du snackbar si besoin
     LaunchedEffect(snackbarMessage) {
         snackbarMessage?.let {
             snackbarHostState.showSnackbar(it)
@@ -82,19 +107,17 @@ fun ConfigsScreen(
         }
     }
 
-    // Gestion du MediaPlayer
     DisposableEffect(playingConfigId, currentTrackIdx, isPlaying) {
         if (playingConfigId != null && isPlaying) {
             isPaused = false
             val config = configs.find { it.id == playingConfigId }
-            val playlist = config?.playlist ?: emptyList()
-            val validPlaylist = playlist.filter { isUriAvailable(ctx, it) }
-            if (validPlaylist.isNotEmpty() && currentTrackIdx < validPlaylist.size) {
-                val uri = validPlaylist[currentTrackIdx]
+            val playlist = config?.playlist?.filter { isUriAvailable(ctx, it) } ?: emptyList()
+            if (playlist.isNotEmpty() && currentTrackIdx < playlist.size) {
+                val uri = playlist[currentTrackIdx]
                 mediaPlayer?.release()
                 mediaPlayer = MediaPlayer.create(ctx, uri)
                 mediaPlayer?.setOnCompletionListener {
-                    currentTrackIdx = (currentTrackIdx + 1) % validPlaylist.size
+                    currentTrackIdx = (currentTrackIdx + 1) % playlist.size
                 }
                 mediaPlayer?.start()
             }
@@ -106,7 +129,7 @@ fun ConfigsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             Row(
-                Modifier
+                modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
                     .navigationBarsPadding(),
@@ -115,19 +138,26 @@ fun ConfigsScreen(
             ) {
                 Button(
                     onClick = {
-                        val hasPermission = ContextCompat.checkSelfPermission(
-                            ctx, Manifest.permission.ACCESS_FINE_LOCATION
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (!hasPermission) requestLocationPermission()
+                        if (ContextCompat.checkSelfPermission(
+                                ctx, Manifest.permission.ACCESS_FINE_LOCATION
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            requestLocationPermission()
+                        }
                         val uc = userContext.fetch(ctx)
-                        snackbarMessage = "Casque: ${if (uc.headphonesConnected) "Oui" else "Non"}, " +
-                                "Position: ${uc.location}, " +
-                                "Heure: ${uc.time}"
+                        snackbarMessage = buildString {
+                            append("Casque: ${if (uc.headphonesConnected) "Oui" else "Non"}\n")
+                            append("Position: ${uc.location}\n")
+                            append("Heure: ${uc.time}\n")
+                            append("Activité: ${getActivityName(uc.currentActivityType)} ")
+                            append("(${uc.currentActivityConfidence}%)")
+                        }
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) { Text("Obtenir contexte", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Obtenir contexte", textAlign = TextAlign.Center)
+                }
+
                 Button(
                     onClick = {
                         showEditor = ContextConfig(
@@ -138,26 +168,40 @@ fun ConfigsScreen(
                             locationLat = null,
                             locationLon = null,
                             locationRadius = null,
+                            requireTime = false,
+                            timeStart = null,
+                            timeEnd = null,
+                            requireActivity = false,
+                            requiredActivityType = null,
+                            minConfidence = 75,
                             playlist = emptyList()
                         )
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) { Text("Nouvelle playlist", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Nouvelle playlist", textAlign = TextAlign.Center)
+                }
+
                 Button(
                     onClick = {
                         val uc = userContext.fetch(ctx)
                         val match = configs.firstOrNull { config ->
                             (!config.requireHeadphones || uc.headphonesConnected) &&
-                                    (!config.requireLocation ||
-                                            (uc.location != "inconnue" && uc.location != "permission manquante" &&
+                                    (!config.requireLocation || (
+                                            uc.location != "inconnue" && uc.location != "permission manquante" &&
                                                     config.locationLat != null && config.locationLon != null && config.locationRadius != null &&
-                                                    isInZone(uc.location, config.locationLat, config.locationLon, config.locationRadius))) &&
-                                    (!config.requireTime ||
-                                            (config.timeStart != null && config.timeEnd != null &&
-                                                    isTimeInRange(uc.time.take(5), config.timeStart, config.timeEnd)))
+                                                    isInZone(uc.location, config.locationLat, config.locationLon, config.locationRadius)
+                                            )) &&
+                                    (!config.requireTime || (
+                                            config.timeStart != null && config.timeEnd != null &&
+                                                    isTimeInRange(uc.time.take(5), config.timeStart, config.timeEnd)
+                                            )) &&
+                                    (!config.requireActivity || (
+                                            uc.currentActivityType == config.requiredActivityType &&
+                                                    uc.currentActivityConfidence >= config.minConfidence
+                                            ))
                         }
+
                         if (match != null && match.playlist.isNotEmpty()) {
                             playingConfigId = match.id
                             currentTrackIdx = 0
@@ -168,26 +212,28 @@ fun ConfigsScreen(
                             snackbarMessage = "Aucune configuration ne correspond au contexte actuel."
                         }
                     },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) { Text("Lancer musique", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) }
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Lancer musique", textAlign = TextAlign.Center)
+                }
             }
         }
     ) { innerPadding ->
-        Column(Modifier.padding(innerPadding).padding(16.dp)) {
+        Column(modifier = Modifier.padding(innerPadding).padding(16.dp)) {
             LazyColumn {
                 items(configs) { config ->
-                    Card(Modifier.padding(4.dp)) {
-                        Column(Modifier.padding(8.dp)) {
+                    Card(modifier = Modifier.padding(4.dp)) {
+                        Column(modifier = Modifier.padding(8.dp)) {
                             Text(config.name, style = MaterialTheme.typography.titleMedium)
-                            Text("Casque requis: ${if (config.requireHeadphones) "Oui" else "Non"}")
-                            Text("Localisation requise: ${if (config.requireLocation) "Oui" else "Non"}")
-                            Text("Heure requise: ${if (config.requireTime) "Oui (${config.timeStart} - ${config.timeEnd})" else "Non"}")
+                            Text("Casque: ${if (config.requireHeadphones) "Oui" else "Non"}")
+                            Text("Localisation: ${if (config.requireLocation) "Oui" else "Non"}")
+                            Text("Heure: ${if (config.requireTime) "Oui (${config.timeStart}–${config.timeEnd})" else "Non"}")
                             if (config.requireLocation) {
-                                Text("Zone: Lat=${config.locationLat}, Lon=${config.locationLon}, Rayon=${config.locationRadius}m")
+                                Text("Zone: ${config.locationLat}, ${config.locationLon} (±${config.locationRadius}m)")
                             }
+                            Text("Activité requise: ${if (config.requireActivity) "Oui" else "Non"}")
                             Text("Musiques: ${config.playlist.size}")
+
                             Row {
                                 Button(onClick = { showEditor = config }) { Text("Modifier") }
                                 Spacer(Modifier.width(8.dp))
@@ -202,27 +248,21 @@ fun ConfigsScreen(
                                     isPlaying = true
                                 }) { Text("Jouer") }
                             }
+
                             if (playingConfigId == config.id && isPlaying) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (!isPaused) {
-                                        Button(onClick = {
-                                            isPaused = true
-                                            mediaPlayer?.pause()
-                                        }) { Text("Pause") }
+                                        Button(onClick = { isPaused = true; mediaPlayer?.pause() }) { Text("Pause") }
                                     } else {
-                                        Button(onClick = {
-                                            isPaused = false
-                                            mediaPlayer?.start()
-                                        }) { Text("Reprendre") }
+                                        Button(onClick = { isPaused = false; mediaPlayer?.start() }) { Text("Reprendre") }
                                     }
                                     Spacer(Modifier.width(8.dp))
                                     Button(onClick = {
-                                        val pl = config.playlist
-                                        currentTrackIdx = (currentTrackIdx + 1) % pl.size
+                                        currentTrackIdx = (currentTrackIdx + 1) % config.playlist.size
                                         isPaused = false
                                     }) { Text("Suivant") }
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Lecture: ${currentTrackIdx + 1}/${config.playlist.size}")
+                                    Text("Piste ${currentTrackIdx + 1}/${config.playlist.size}")
                                 }
                             }
                         }
@@ -230,13 +270,17 @@ fun ConfigsScreen(
                 }
             }
         }
+
         if (showEditor != null) {
             ConfigEditorDialog(
                 initial = showEditor,
                 onDismiss = { showEditor = null },
                 onSave = { config ->
-                    if (ConfigRepository.getAll().any { it.id == config.id }) ConfigRepository.update(config)
-                    else ConfigRepository.add(config)
+                    if (configs.any { it.id == config.id }) {
+                        ConfigRepository.update(config)
+                    } else {
+                        ConfigRepository.add(config)
+                    }
                     ConfigRepository.save(ctx)
                     showEditor = null
                 }
@@ -264,7 +308,12 @@ fun isTimeInRange(current: String, start: String, end: String): Boolean {
     val now = fmt.parse(current)
     val s = fmt.parse(start)
     val e = fmt.parse(end)
-    return if (s <= e) now in s..e else (now >= s || now <= e)
+    if (now != null) {
+        if (s != null) {
+            return if (s <= e) now in s..e else (now >= s || now <= e)
+        }
+    }
+    return false
 }
 
 fun isUriAvailable(context: Context, uri: Uri): Boolean {
@@ -276,6 +325,7 @@ fun isUriAvailable(context: Context, uri: Uri): Boolean {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigEditorDialog(
     initial: ContextConfig?,
@@ -292,6 +342,9 @@ fun ConfigEditorDialog(
     var requireTime by remember { mutableStateOf(initial?.requireTime ?: false) }
     var timeStart by remember { mutableStateOf(initial?.timeStart ?: "") }
     var timeEnd by remember { mutableStateOf(initial?.timeEnd ?: "") }
+    var requiredActivityType by remember { mutableIntStateOf(initial?.requiredActivityType ?: 0) }
+    var requireActivity by remember { mutableStateOf(initial?.requireActivity?: true) }
+    var minConfidenceStr by remember { mutableStateOf(initial?.minConfidence?.toString() ?: "75") }
     var playlist by remember { mutableStateOf(initial?.playlist ?: emptyList()) }
     var musicNames by remember { mutableStateOf<List<String>>(emptyList()) }
 
@@ -376,6 +429,51 @@ fun ConfigEditorDialog(
                         label = { Text("Heure fin (HH:mm)") }
                     )
                 }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = requireActivity, onCheckedChange = { requireActivity = it })
+                    Text("Activité physique requise")
+                }
+                if (requireActivity) {
+                    var expanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+                        OutlinedTextField(
+                            value = when (requiredActivityType) {
+                                DetectedActivity.IN_VEHICLE -> "En véhicule"
+                                DetectedActivity.RUNNING -> "Course à pied"
+                                DetectedActivity.WALKING -> "Marche"
+                                DetectedActivity.ON_FOOT -> "À pied (général)"
+                                DetectedActivity.STILL -> "Immobile"
+                                else -> "Non défini"
+                            },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Type d'activité") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                            modifier = Modifier.menuAnchor()
+                        )
+                        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            listOf(
+                                DetectedActivity.IN_VEHICLE to "En véhicule",
+                                DetectedActivity.RUNNING to "Course à pied",
+                                DetectedActivity.WALKING to "Marche",
+                                DetectedActivity.ON_FOOT to "À pied (général)",
+                                DetectedActivity.STILL to "Immobile"
+                            ).forEach { (type, label) ->
+                                DropdownMenuItem(text = { Text(label) }, onClick = {
+                                    requiredActivityType = type
+                                    expanded = false
+                                })
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = minConfidenceStr,
+                        onValueChange = { minConfidenceStr = it },
+                        label = { Text("Confiance minimale (%)") }
+                    )
+                }
+
                 Button(onClick = { pickAudioLauncher.launch(arrayOf("audio/*")) }) { Text("Ajouter des musiques") }
                 Text("Playlist :")
                 musicNames.forEachIndexed { idx, n ->
@@ -412,6 +510,9 @@ fun ConfigEditorDialog(
                                 requireTime = requireTime,
                                 timeStart = timeStart,
                                 timeEnd = timeEnd,
+                                requireActivity = requireActivity,
+                                requiredActivityType = requiredActivityType,
+                                minConfidence = minConfidenceStr.toIntOrNull() ?: 50,
                                 playlist = playlist
                             )
                         )
