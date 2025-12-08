@@ -30,6 +30,9 @@
             android:name=".ActivityRecognitionReceiver"
             android:exported="true">
         </receiver>
+        <meta-data
+            android:name="com.google.android.awareness.API_KEY"
+            android:value="AIzaSyA2kqvqAoMO74lwWFZJhMtY5yjgs3Cq_kw"/>
     </application>
 
 </manifest>

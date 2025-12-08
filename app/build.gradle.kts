@@ -59,6 +59,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.play.services.location)
+    implementation(libs.play.services.awareness)
     implementation("com.google.code.gson:gson:2.13.2")
 
 }
