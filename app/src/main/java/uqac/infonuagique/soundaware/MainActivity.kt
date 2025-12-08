@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.DetectedActivity
+import kotlinx.coroutines.launch
 import uqac.infonuagique.soundaware.ActivityRecognitionReceiver.Companion.getActivityName
 import uqac.infonuagique.soundaware.ui.theme.SoundAwareTheme
 
@@ -90,6 +91,9 @@ fun ConfigsScreen(
     requestLocationPermission: () -> Unit
 ) {
     val ctx = LocalContext.current
+
+    val scope = rememberCoroutineScope()
+
     val configs = ConfigRepository.getAll()
     var showEditor by remember { mutableStateOf<ContextConfig?>(null) }
     var playingConfigId by remember { mutableStateOf<Long?>(null) }
@@ -138,19 +142,21 @@ fun ConfigsScreen(
             ) {
                 Button(
                     onClick = {
-                        if (ContextCompat.checkSelfPermission(
-                                ctx, Manifest.permission.ACCESS_FINE_LOCATION
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            requestLocationPermission()
-                        }
-                        val uc = userContext.fetch(ctx)
-                        snackbarMessage = buildString {
-                            append("Casque: ${if (uc.headphonesConnected) "Oui" else "Non"}\n")
-                            append("Position: ${uc.location}\n")
-                            append("Heure: ${uc.time}\n")
-                            append("Activité: ${getActivityName(uc.currentActivityType)} ")
-                            append("(${uc.currentActivityConfidence}%)")
+                        scope.launch{
+                            if (ContextCompat.checkSelfPermission(
+                                    ctx, Manifest.permission.ACCESS_FINE_LOCATION
+                                ) != PackageManager.PERMISSION_GRANTED
+                            ) {
+                                requestLocationPermission()
+                            }
+                            val uc = userContext.fetch(ctx)
+                            snackbarMessage = buildString {
+                                append("Casque: ${if (uc.headphonesConnected) "Oui" else "Non"}\n")
+                                append("Position: ${uc.location}\n")
+                                append("Heure: ${uc.time}\n")
+                                append("Activité: ${getActivityName(uc.currentActivityType)} ")
+                                append("(${uc.currentActivityConfidence}%)")
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -184,32 +190,34 @@ fun ConfigsScreen(
 
                 Button(
                     onClick = {
-                        val uc = userContext.fetch(ctx)
-                        val match = configs.firstOrNull { config ->
-                            (!config.requireHeadphones || uc.headphonesConnected) &&
-                                    (!config.requireLocation || (
-                                            uc.location != "inconnue" && uc.location != "permission manquante" &&
-                                                    config.locationLat != null && config.locationLon != null && config.locationRadius != null &&
-                                                    isInZone(uc.location, config.locationLat, config.locationLon, config.locationRadius)
-                                            )) &&
-                                    (!config.requireTime || (
-                                            config.timeStart != null && config.timeEnd != null &&
-                                                    isTimeInRange(uc.time.take(5), config.timeStart, config.timeEnd)
-                                            )) &&
-                                    (!config.requireActivity || (
-                                            uc.currentActivityType == config.requiredActivityType &&
-                                                    uc.currentActivityConfidence >= config.minConfidence
-                                            ))
-                        }
+                        scope.launch{
+                            val uc = userContext.fetch(ctx)
+                            val match = configs.firstOrNull { config ->
+                                (!config.requireHeadphones || uc.headphonesConnected) &&
+                                        (!config.requireLocation || (
+                                                uc.location != "inconnue" && uc.location != "permission manquante" &&
+                                                        config.locationLat != null && config.locationLon != null && config.locationRadius != null &&
+                                                        isInZone(uc.location, config.locationLat, config.locationLon, config.locationRadius)
+                                                )) &&
+                                        (!config.requireTime || (
+                                                config.timeStart != null && config.timeEnd != null &&
+                                                        isTimeInRange(uc.time.take(5), config.timeStart, config.timeEnd)
+                                                )) &&
+                                        (!config.requireActivity || (
+                                                uc.currentActivityType == config.requiredActivityType &&
+                                                        uc.currentActivityConfidence >= config.minConfidence
+                                                ))
+                            }
 
-                        if (match != null && match.playlist.isNotEmpty()) {
-                            playingConfigId = match.id
-                            currentTrackIdx = 0
-                            isPlaying = true
-                        } else {
-                            playingConfigId = null
-                            isPlaying = false
-                            snackbarMessage = "Aucune configuration ne correspond au contexte actuel."
+                            if (match != null && match.playlist.isNotEmpty()) {
+                                playingConfigId = match.id
+                                currentTrackIdx = 0
+                                isPlaying = true
+                            } else {
+                                playingConfigId = null
+                                isPlaying = false
+                                snackbarMessage = "Aucune configuration ne correspond au contexte actuel."
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f)
