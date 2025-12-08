@@ -4,11 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import com.google.android.gms.awareness.Awareness
 import com.google.android.gms.awareness.snapshot.DetectedActivityResponse
-import com.google.android.gms.awareness.snapshot.DetectedActivityResult
 import com.google.android.gms.awareness.snapshot.HeadphoneStateResponse
-import com.google.android.gms.awareness.snapshot.HeadphoneStateResult
 import com.google.android.gms.awareness.snapshot.LocationResponse
-import com.google.android.gms.awareness.snapshot.LocationResult
+import com.google.android.gms.awareness.state.HeadphoneState
 import com.google.android.gms.location.DetectedActivity
 import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +14,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
 
 data class UserContextData(
     val headphonesConnected: Boolean = false,
@@ -39,7 +38,7 @@ class UserContext {
         val headphoneTask = snapshotClient.headphoneState
         // Tasks.await is safe here because we are on the IO dispatcher
         val headphoneResult: HeadphoneStateResponse = Tasks.await(headphoneTask)
-        val headphonesConnected = headphoneResult.headphoneState.state == 1
+        val headphonesConnected = headphoneResult.headphoneState.state == HeadphoneState.PLUGGED_IN
 
         // 3. Activité + confiance
         var activityType = DetectedActivity.STILL
