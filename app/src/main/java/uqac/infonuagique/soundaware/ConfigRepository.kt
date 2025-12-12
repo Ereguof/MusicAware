@@ -61,14 +61,12 @@ object ConfigRepository {
                         uri,
                         Intent.FLAG_GRANT_READ_URI_PERMISSION
                     )
-                    // Vérifie que le fichier est accessible
                     context.contentResolver.openFileDescriptor(uri, "r")?.close()
                     uri
                 } catch (_: Exception) {
                     null
                 }
             }
-            // Ignore les configs sans playlist valide
             if (uris.isEmpty()) return@mapNotNull null
             ContextConfig(
                 id = it.id,

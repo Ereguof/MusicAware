@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
+
+    <attribution android:tag="awareness_provider" android:label="@string/app_name" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -26,13 +29,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <receiver
-            android:name=".ActivityRecognitionReceiver"
-            android:exported="true">
-        </receiver>
         <meta-data
             android:name="com.google.android.awareness.API_KEY"
-            android:value="AIzaSyA2kqvqAoMO74lwWFZJhMtY5yjgs3Cq_kw"/>
+            android:value="AIzaSyAhSg_SVYe_fhRvc9DBVfO5Nl_fPs3086s"/>
     </application>
 
 </manifest>
