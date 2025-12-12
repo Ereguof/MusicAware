@@ -27,30 +27,45 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.DetectedActivity
+import kotlinx.coroutines.launch
 import uqac.infonuagique.soundaware.ActivityRecognitionReceiver.Companion.getActivityName
 import uqac.infonuagique.soundaware.ui.theme.SoundAwareTheme
 
+/**
+ * Activité principale de l'application SoundAware.
+ *
+ * Cette activité initialise les composants essentiels (chargement des configurations persistantes,
+ * gestion des permissions pour la détection d'activité physique) et configure l'interface utilisateur
+ * avec Jetpack Compose.
+ */
 class MainActivity : ComponentActivity() {
 
     private val userContext = UserContext()
     private val LOCATION_PERMISSION_REQUEST = 1001
 
-    // Launcher pour demander la permission d'activité physique
+    /**
+     * Launcher pour la demande de permission ACTIVITY_RECOGNITION via l'API Activity Result.
+     * En cas d'accord, redémarre proprement la détection d'activité.
+     */
     private val activityRecognitionPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            // Forcer le redémarrage propre
             ActivityDetectionService.stopActivityRecognition(this)
             ActivityDetectionService.startActivityRecognitionIfPermissionGranted(this)
         }
     }
 
+    /**
+     * Méthode de cycle de vie : initialisation de l'activité.
+     *
+     * Charge les configurations sauvegardées, initialise ou demande la permission pour la détection
+     * d'activité, active le mode edge-to-edge et définit le contenu Compose.
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ConfigRepository.load(this)
 
-        // Démarrage intelligent de la détection d'activité
         if (ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACTIVITY_RECOGNITION
@@ -58,7 +73,6 @@ class MainActivity : ComponentActivity() {
         ) {
             ActivityDetectionService.startActivityRecognitionIfPermissionGranted(this)
         } else {
-            // Demande la permission au premier lancement
             activityRecognitionPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
         }
 
@@ -79,17 +93,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Méthode de cycle de vie : libération des ressources lors de la destruction de l'activité.
+     */
     override fun onDestroy() {
         super.onDestroy()
     }
 }
 
+/**
+ * Écran principal affichant la liste des configurations de contexte et permettant leur gestion
+ * (création, modification, suppression, lecture manuelle ou automatique).
+ *
+ * @param userContext Instance de [UserContext] pour récupérer les données contextuelles actuelles.
+ * @param requestLocationPermission Callback pour demander la permission de localisation fine.
+ */
 @Composable
 fun ConfigsScreen(
     userContext: UserContext,
     requestLocationPermission: () -> Unit
 ) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     val configs = ConfigRepository.getAll()
     var showEditor by remember { mutableStateOf<ContextConfig?>(null) }
     var playingConfigId by remember { mutableStateOf<Long?>(null) }
@@ -138,19 +164,21 @@ fun ConfigsScreen(
             ) {
                 Button(
                     onClick = {
-                        if (ContextCompat.checkSelfPermission(
-                                ctx, Manifest.permission.ACCESS_FINE_LOCATION
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            requestLocationPermission()
-                        }
-                        val uc = userContext.fetch(ctx)
-                        snackbarMessage = buildString {
-                            append("Casque: ${if (uc.headphonesConnected) "Oui" else "Non"}\n")
-                            append("Position: ${uc.location}\n")
-                            append("Heure: ${uc.time}\n")
-                            append("Activité: ${getActivityName(uc.currentActivityType)} ")
-                            append("(${uc.currentActivityConfidence}%)")
+                        scope.launch {
+                            if (ContextCompat.checkSelfPermission(
+                                    ctx, Manifest.permission.ACCESS_FINE_LOCATION
+                                ) != PackageManager.PERMISSION_GRANTED
+                            ) {
+                                requestLocationPermission()
+                            }
+                            val uc = userContext.fetch(ctx)
+                            snackbarMessage = buildString {
+                                append("Casque: ${if (uc.headphonesConnected) "Oui" else "Non"}\n")
+                                append("Position: ${uc.location}\n")
+                                append("Heure: ${uc.time}\n")
+                                append("Activité: ${getActivityName(uc.currentActivityType)} ")
+                                append("(${uc.currentActivityConfidence}%)")
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -184,32 +212,34 @@ fun ConfigsScreen(
 
                 Button(
                     onClick = {
-                        val uc = userContext.fetch(ctx)
-                        val match = configs.firstOrNull { config ->
-                            (!config.requireHeadphones || uc.headphonesConnected) &&
-                                    (!config.requireLocation || (
-                                            uc.location != "inconnue" && uc.location != "permission manquante" &&
-                                                    config.locationLat != null && config.locationLon != null && config.locationRadius != null &&
-                                                    isInZone(uc.location, config.locationLat, config.locationLon, config.locationRadius)
-                                            )) &&
-                                    (!config.requireTime || (
-                                            config.timeStart != null && config.timeEnd != null &&
-                                                    isTimeInRange(uc.time.take(5), config.timeStart, config.timeEnd)
-                                            )) &&
-                                    (!config.requireActivity || (
-                                            uc.currentActivityType == config.requiredActivityType &&
-                                                    uc.currentActivityConfidence >= config.minConfidence
-                                            ))
-                        }
+                        scope.launch {
+                            val uc = userContext.fetch(ctx)
+                            val match = configs.firstOrNull { config ->
+                                (!config.requireHeadphones || uc.headphonesConnected) &&
+                                        (!config.requireLocation || (
+                                                uc.location != "inconnue" && uc.location != "permission manquante" &&
+                                                        config.locationLat != null && config.locationLon != null && config.locationRadius != null &&
+                                                        isInZone(uc.location, config.locationLat, config.locationLon, config.locationRadius)
+                                                )) &&
+                                        (!config.requireTime || (
+                                                config.timeStart != null && config.timeEnd != null &&
+                                                        isTimeInRange(uc.time.take(5), config.timeStart, config.timeEnd)
+                                                )) &&
+                                        (!config.requireActivity || (
+                                                uc.currentActivityType == config.requiredActivityType &&
+                                                        uc.currentActivityConfidence >= config.minConfidence
+                                                ))
+                            }
 
-                        if (match != null && match.playlist.isNotEmpty()) {
-                            playingConfigId = match.id
-                            currentTrackIdx = 0
-                            isPlaying = true
-                        } else {
-                            playingConfigId = null
-                            isPlaying = false
-                            snackbarMessage = "Aucune configuration ne correspond au contexte actuel."
+                            if (match != null && match.playlist.isNotEmpty()) {
+                                playingConfigId = match.id
+                                currentTrackIdx = 0
+                                isPlaying = true
+                            } else {
+                                playingConfigId = null
+                                isPlaying = false
+                                snackbarMessage = "Aucune configuration ne correspond au contexte actuel."
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -289,10 +319,15 @@ fun ConfigsScreen(
     }
 }
 
-
-
-
-// Utilitaire pour vérifier si la position actuelle est dans la zone
+/**
+ * Vérifie si la position actuelle de l'utilisateur se trouve dans la zone géographique définie.
+ *
+ * @param locationStr Chaîne au format "latitude, longitude" représentant la position actuelle.
+ * @param lat Latitude du centre de la zone.
+ * @param lon Longitude du centre de la zone.
+ * @param radius Rayon de la zone en mètres.
+ * @return true si la distance est inférieure ou égale au rayon, false sinon.
+ */
 fun isInZone(locationStr: String, lat: Double, lon: Double, radius: Double): Boolean {
     val parts = locationStr.split(",")
     if (parts.size != 2) return false
@@ -303,19 +338,32 @@ fun isInZone(locationStr: String, lat: Double, lon: Double, radius: Double): Boo
     return results[0] <= radius
 }
 
+/**
+ * Vérifie si l'heure actuelle se trouve dans la plage horaire définie (gère le passage par minuit).
+ *
+ * @param current Heure actuelle au format "HH:mm".
+ * @param start Heure de début au format "HH:mm".
+ * @param end Heure de fin au format "HH:mm".
+ * @return true si l'heure actuelle est dans la plage, false sinon.
+ */
 fun isTimeInRange(current: String, start: String, end: String): Boolean {
     val fmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
     val now = fmt.parse(current)
     val s = fmt.parse(start)
     val e = fmt.parse(end)
-    if (now != null) {
-        if (s != null) {
-            return if (s <= e) now in s..e else (now >= s || now <= e)
-        }
+    if (now != null && s != null && e != null) {
+        return if (s <= e) now.time in s.time..e.time else (now.time >= s.time || now.time <= e.time)
     }
     return false
 }
 
+/**
+ * Vérifie si un URI de fichier audio est toujours accessible (permission persistante valide).
+ *
+ * @param context Contexte de l'application.
+ * @param uri URI du fichier à vérifier.
+ * @return true si le fichier peut être ouvert, false en cas d'erreur.
+ */
 fun isUriAvailable(context: Context, uri: Uri): Boolean {
     return try {
         context.contentResolver.openFileDescriptor(uri, "r")?.close()
@@ -325,6 +373,17 @@ fun isUriAvailable(context: Context, uri: Uri): Boolean {
     }
 }
 
+/**
+ * Dialogue d'édition ou de création d'une configuration de contexte.
+ *
+ * Permet de définir le nom, les conditions d'activation (casque, localisation, heure, activité)
+ * et la playlist associée. Gère la sélection multiple de fichiers audio avec prise de permissions
+ * persistantes.
+ *
+ * @param initial Configuration initiale (null pour une création).
+ * @param onDismiss Callback appelé lors de la fermeture sans sauvegarde.
+ * @param onSave Callback appelé avec la configuration finale lors de l'enregistrement.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigEditorDialog(
@@ -342,27 +401,28 @@ fun ConfigEditorDialog(
     var requireTime by remember { mutableStateOf(initial?.requireTime ?: false) }
     var timeStart by remember { mutableStateOf(initial?.timeStart ?: "") }
     var timeEnd by remember { mutableStateOf(initial?.timeEnd ?: "") }
-    var requiredActivityType by remember { mutableIntStateOf(initial?.requiredActivityType ?: 0) }
-    var requireActivity by remember { mutableStateOf(initial?.requireActivity?: true) }
+    var requireActivity by remember { mutableStateOf(initial?.requireActivity ?: false) }
+    var requiredActivityType by remember { mutableIntStateOf(initial?.requiredActivityType ?: DetectedActivity.UNKNOWN) }
     var minConfidenceStr by remember { mutableStateOf(initial?.minConfidence?.toString() ?: "75") }
-    var playlist by remember { mutableStateOf(initial?.playlist ?: emptyList()) }
+    var playlist by remember { mutableStateOf(initial?.playlist ?: emptyList<Uri>()) }
     var musicNames by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val pickAudioLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris: List<Uri> ->
-        playlist = playlist + uris
-        uris.forEach { uri ->
-            try {
-                ctx.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: Exception) {}
+    ) { uris: List<Uri>? ->
+        uris?.let {
+            playlist = playlist + it
+            it.forEach { uri ->
+                try {
+                    ctx.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
+            }
         }
     }
 
-    // Récupère les noms des fichiers
     LaunchedEffect(playlist) {
         musicNames = playlist.map { uri ->
             val cursor = ctx.contentResolver.query(uri, null, null, null, null)
@@ -384,7 +444,7 @@ fun ConfigEditorDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 400.dp) // Limite la hauteur de la boîte de dialogue
+                    .heightIn(max = 400.dp)
                     .verticalScroll(rememberScrollState())
             ) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Nom") })
@@ -397,39 +457,18 @@ fun ConfigEditorDialog(
                     Text("Localisation requise")
                 }
                 if (requireLocation) {
-                    OutlinedTextField(
-                        value = locationLat,
-                        onValueChange = { locationLat = it },
-                        label = { Text("Latitude") }
-                    )
-                    OutlinedTextField(
-                        value = locationLon,
-                        onValueChange = { locationLon = it },
-                        label = { Text("Longitude") }
-                    )
-                    OutlinedTextField(
-                        value = locationRadius,
-                        onValueChange = { locationRadius = it },
-                        label = { Text("Rayon (mètres)") }
-                    )
+                    OutlinedTextField(value = locationLat, onValueChange = { locationLat = it }, label = { Text("Latitude") })
+                    OutlinedTextField(value = locationLon, onValueChange = { locationLon = it }, label = { Text("Longitude") })
+                    OutlinedTextField(value = locationRadius, onValueChange = { locationRadius = it }, label = { Text("Rayon (mètres)") })
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = requireTime, onCheckedChange = { requireTime = it })
                     Text("Heure requise")
                 }
                 if (requireTime) {
-                    OutlinedTextField(
-                        value = timeStart,
-                        onValueChange = { timeStart = it },
-                        label = { Text("Heure début (HH:mm)") }
-                    )
-                    OutlinedTextField(
-                        value = timeEnd,
-                        onValueChange = { timeEnd = it },
-                        label = { Text("Heure fin (HH:mm)") }
-                    )
+                    OutlinedTextField(value = timeStart, onValueChange = { timeStart = it }, label = { Text("Heure début (HH:mm)") })
+                    OutlinedTextField(value = timeEnd, onValueChange = { timeEnd = it }, label = { Text("Heure fin (HH:mm)") })
                 }
-
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = requireActivity, onCheckedChange = { requireActivity = it })
                     Text("Activité physique requise")
@@ -508,11 +547,11 @@ fun ConfigEditorDialog(
                                 locationLon = locationLon.toDoubleOrNull(),
                                 locationRadius = locationRadius.toDoubleOrNull(),
                                 requireTime = requireTime,
-                                timeStart = timeStart,
-                                timeEnd = timeEnd,
+                                timeStart = timeStart.ifBlank { null },
+                                timeEnd = timeEnd.ifBlank { null },
                                 requireActivity = requireActivity,
-                                requiredActivityType = requiredActivityType,
-                                minConfidence = minConfidenceStr.toIntOrNull() ?: 50,
+                                requiredActivityType = if (requireActivity) requiredActivityType else null,
+                                minConfidence = minConfidenceStr.toIntOrNull() ?: 75,
                                 playlist = playlist
                             )
                         )
@@ -525,6 +564,3 @@ fun ConfigEditorDialog(
         }
     )
 }
-
-
-

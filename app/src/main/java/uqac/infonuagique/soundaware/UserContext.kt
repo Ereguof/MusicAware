@@ -14,17 +14,64 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Data class représentant le contexte actuel de l'utilisateur dans l'application SoundAware.
+ *
+ * Cette classe regroupe les informations contextuelles détectées dynamiquement :
+ * - Connexion d'écouteurs (filaires ou Bluetooth)
+ * - Heure actuelle
+ * - Position géographique (coordonnées ou nom de localité)
+ * - Activité physique détectée et son niveau de confiance
+ *
+ * Les valeurs sont mises à jour via la méthode [fetch], qui interroge les services système
+ * et le récepteur d'activité ([ActivityRecognitionReceiver]).
+ */
 data class UserContext(
+    /**
+     * Indique si un casque ou des écouteurs (filaires ou Bluetooth A2DP) sont connectés.
+     */
     var headphonesConnected: Boolean = false,
+
+    /**
+     * Position géographique actuelle sous forme de chaîne :
+     * - "latitude,longitude"
+     * - Nom de la localité (si géocodage inverse réussi)
+     * - "inconnue", "Localisation non disponible" ou "permission manquante" en cas d'erreur.
+     */
     var location: String = "inconnue",
+
+    /**
+     * Heure actuelle au format "HH:mm".
+     */
     var time: String = "00:00",
-    // Activity fields
-    var currentActivityType: Int = -1, // -1 or DetectedActivity.UNKNOWN
+
+    /**
+     * Type d'activité physique actuellement détectée (constantes de [com.google.android.gms.location.DetectedActivity]).
+     * Valeur initiale : -1 (équivalent à UNKNOWN).
+     */
+    var currentActivityType: Int = -1,
+
+    /**
+     * Niveau de confiance de la détection d'activité (0-100).
+     */
     var currentActivityConfidence: Int = 0
 ) {
 
+    /**
+     * Met à jour les propriétés de cette instance avec les valeurs contextuelles actuelles.
+     *
+     * Cette méthode interroge les services Android pour les écouteurs, l'heure et la localisation,
+     * et récupère les données d'activité depuis [ActivityRecognitionReceiver].
+     *
+     * **Note** : Le géocodage inverse est effectué de manière synchrone pour simplifier le prototype.
+     * Dans une application de production, il est recommandé d'utiliser une approche asynchrone
+     * pour éviter tout blocage du thread principal.
+     *
+     * @param context Contexte de l'application, requis pour accéder aux services système.
+     * @return L'instance courante mise à jour (pour chaînage fluide).
+     */
     fun fetch(context: Context): UserContext {
-        // 1. HEADPHONES CHECK
+        // 1. Détection des écouteurs connectés
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         this.headphonesConnected = devices.any {
@@ -33,11 +80,11 @@ data class UserContext(
                     it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
         }
 
-        // 2. TIME CHECK
+        // 2. Heure actuelle
         val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
         this.time = sdf.format(Date())
 
-        // 3. LOCATION CHECK
+        // 3. Localisation géographique
         if (ActivityCompat.checkSelfPermission(
                 context,
                 Manifest.permission.ACCESS_FINE_LOCATION
@@ -48,13 +95,10 @@ data class UserContext(
                 ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
             if (loc != null) {
-                // Optional: Reverse Geocoding for city name, or just store lat/long string
-                // For simplicity, we store coordinates or city if available
                 try {
                     val geocoder = Geocoder(context, Locale.getDefault())
-                    // Note: synchronous geocoder is discouraged on main thread but okay for simple prototype
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        // Async implementation omitted for brevity, using lat/long string fallback
+                        // Pour API 33+, une implémentation asynchrone serait préférable
                         this.location = "${loc.latitude},${loc.longitude}"
                     } else {
                         @Suppress("DEPRECATION")
@@ -75,8 +119,7 @@ data class UserContext(
             this.location = "permission manquante"
         }
 
-        // 4. ACTIVITY RECOGNITION CHECK (Vital Fix)
-        // We pull the latest values directly from the Receiver's static storage
+        // 4. Activité physique (récupérée depuis le récepteur statique)
         this.currentActivityType = ActivityRecognitionReceiver.getCurrentActivityTypeVal()
         this.currentActivityConfidence = ActivityRecognitionReceiver.getCurrentActivityConfidenceVal()
 
